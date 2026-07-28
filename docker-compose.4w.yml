@@ -1,0 +1,239 @@
+# crunch : variante 4 workers, 8 cœurs au total
+# docker compose -f docker-compose.4w.yml up -d
+#
+# data/ et jobs/ sont montés dans tous les conteneurs Spark : le driver est
+# dans spark-master mais les tâches d'E/S tournent sur les exécuteurs.
+name: crunch-4w
+
+x-spark-image: &spark-image apache/spark:3.5.5-python3
+
+x-spark-env: &spark-env
+  SPARK_NO_DAEMONIZE: "true"
+  PYSPARK_PYTHON: python3
+  PYSPARK_DRIVER_PYTHON: python3
+  PYTHONIOENCODING: utf-8
+  LANG: C.UTF-8
+  LC_ALL: C.UTF-8
+
+x-spark-volumes: &spark-volumes
+  - ./jobs:/opt/app:ro
+  - ./data:/opt/data
+  - ./data/events:/opt/spark/events
+  - ./conf/spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+  - ./conf/spark/metrics.properties:/opt/spark/conf/metrics.properties:ro
+
+x-spark-common: &spark-common
+  image: *spark-image
+  user: root                      # pour écrire dans les volumes montés
+  environment: *spark-env
+  volumes: *spark-volumes
+  networks: [crunch]
+  restart: unless-stopped
+
+services:
+
+  # ---------------------------------------------------------------- Spark ---
+  spark-master:
+    <<: *spark-common
+    container_name: crunch-spark-master
+    hostname: spark-master
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.master.Master
+      - --host
+      - spark-master
+      - --port
+      - "7077"
+      - --webui-port
+      - "8080"
+    ports:
+      - "8080:8080"     # master UI
+      - "7077:7077"     # soumission
+      - "4040:4040"     # UI de l'application en cours
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/localhost/7077' || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  spark-worker-1:
+    <<: *spark-common
+    container_name: crunch-spark-worker-1
+    hostname: spark-worker-1
+    depends_on:
+      spark-master:
+        condition: service_started
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.worker.Worker
+      - spark://spark-master:7077
+      - --cores
+      - "2"
+      - --memory
+      - 2g
+      - --webui-port
+      - "8081"
+    environment:
+      <<: *spark-env
+      SPARK_WORKER_CORES: "2"
+      SPARK_WORKER_MEMORY: "2g"
+    ports:
+      - "8081:8081"
+
+  spark-worker-2:
+    <<: *spark-common
+    container_name: crunch-spark-worker-2
+    hostname: spark-worker-2
+    depends_on:
+      spark-master:
+        condition: service_started
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.worker.Worker
+      - spark://spark-master:7077
+      - --cores
+      - "2"
+      - --memory
+      - 2g
+      - --webui-port
+      - "8081"
+    environment:
+      <<: *spark-env
+      SPARK_WORKER_CORES: "2"
+      SPARK_WORKER_MEMORY: "2g"
+    ports:
+      - "8082:8081"
+
+  spark-worker-3:
+    <<: *spark-common
+    container_name: crunch-spark-worker-3
+    hostname: spark-worker-3
+    depends_on:
+      spark-master:
+        condition: service_started
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.worker.Worker
+      - spark://spark-master:7077
+      - --cores
+      - "2"
+      - --memory
+      - 2g
+      - --webui-port
+      - "8081"
+    environment:
+      <<: *spark-env
+      SPARK_WORKER_CORES: "2"
+      SPARK_WORKER_MEMORY: "2g"
+    ports:
+      - "8083:8081"
+
+  spark-worker-4:
+    <<: *spark-common
+    container_name: crunch-spark-worker-4
+    hostname: spark-worker-4
+    depends_on:
+      spark-master:
+        condition: service_started
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.worker.Worker
+      - spark://spark-master:7077
+      - --cores
+      - "2"
+      - --memory
+      - 2g
+      - --webui-port
+      - "8081"
+    environment:
+      <<: *spark-env
+      SPARK_WORKER_CORES: "2"
+      SPARK_WORKER_MEMORY: "2g"
+    ports:
+      - "8084:8081"
+
+
+  spark-history:
+    <<: *spark-common
+    container_name: crunch-spark-history
+    hostname: spark-history
+    depends_on: [spark-master]
+    environment:
+      <<: *spark-env
+      SPARK_HISTORY_OPTS: >-
+        -Dspark.history.fs.logDirectory=file:/opt/spark/events
+        -Dspark.history.ui.port=18080
+        -Dspark.history.fs.update.interval=5s
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.history.HistoryServer
+    ports:
+      - "18080:18080"
+
+  # ----------------------------------------------------------- Monitoring ---
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: crunch-prometheus
+    hostname: prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --web.enable-lifecycle
+    volumes:
+      - ./conf/prometheus/prometheus.4w.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    networks: [crunch]
+    restart: unless-stopped
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: crunch-cadvisor
+    hostname: cadvisor
+    privileged: true
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    command:
+      - --housekeeping_interval=5s          # les jobs sont courts
+      - --docker_only=true
+      - --store_container_labels=false
+    ports:
+      - "8085:8080"
+    networks: [crunch]
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: crunch-grafana
+    hostname: grafana
+    depends_on: [prometheus]
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_DEFAULT_THEME: dark
+    volumes:
+      - ./conf/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./conf/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    networks: [crunch]
+    restart: unless-stopped
+
+networks:
+  crunch:
+    name: crunch-net
+
+volumes:
+  prometheus-data:
+  grafana-data:

@@ -1,0 +1,43 @@
+# crunch : scrape de la variante 1 worker(s)
+# Métriques Spark exposées par le PrometheusServlet (conf/spark/metrics.properties),
+# métriques conteneurs par cAdvisor.
+global:
+  scrape_interval: 5s          # jobs courts, il faut une résolution fine
+  evaluation_interval: 15s
+  external_labels:
+    variant: "1w"
+    workers: "1"
+
+scrape_configs:
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: spark-master
+    metrics_path: /metrics/master/prometheus
+    static_configs:
+      - targets: ["spark-master:8080"]
+        labels:
+          variant: "1w"
+
+  - job_name: spark-workers
+    metrics_path: /metrics/prometheus
+    static_configs:
+      - targets: ["spark-worker-1:8081"]
+        labels:
+          variant: "1w"
+
+  # cible DOWN au repos : l'UI 4040 n'existe que pendant un job
+  - job_name: spark-driver
+    metrics_path: /metrics/prometheus
+    static_configs:
+      - targets: ["spark-master:4040"]
+        labels:
+          variant: "1w"
+
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
+        labels:
+          variant: "1w"
