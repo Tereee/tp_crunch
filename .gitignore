@@ -1,0 +1,13 @@
+data/*
+!data/out/
+data/out/*
+!data/out/runs.csv
+
+# Ignorer l'archive qu'on vous a fournie
+*.rar
+*.zip
+*.tar.gz
+
+# Fichiers temporaires générés par le script
+.crunch-variant
+run_all.ps1
